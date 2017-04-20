@@ -6,11 +6,13 @@ import           Control.Monad
 import           Control.Exception
 import           Control.DeepSeq
 import qualified Crypto.PVSS as PVSS
-import qualified Crypto.SCRAPE as SCRAPE
+import qualified Crypto.SCRAPE.BDS as SCRAPE_BDS
+import qualified Crypto.SCRAPE.DDH as SCRAPE_DDH
 import           Time.Types
 import           Time.System
 import           Data.Hourglass (timeDiffP)
 import           Text.Printf (printf)
+import qualified Data.Vector as V
 
 showTimeDiff :: (Seconds, NanoSeconds) -> String
 showTimeDiff (Seconds s, NanoSeconds n) =
@@ -78,35 +80,57 @@ go t n = do
     putStrLn $ show $ PVSS.escrowSecret e
     putStrLn $ show recovered
 
-goScrape :: SCRAPE.Threshold -> Int -> IO ()
-goScrape t n = do
+goScrapeDDH :: SCRAPE_DDH.Threshold -> Int -> IO ()
+goScrapeDDH t n = do
     keypairParticipants <- {-timingP "keypair"-} (replicateM n $ PVSS.keyPairGenerate)
     () <- deepseq keypairParticipants (return ())
     let participantsPublicKeys = map PVSS.toPublicKey keypairParticipants
-        participants           =  SCRAPE.Participants participantsPublicKeys
+        participants           =  SCRAPE_DDH.Participants participantsPublicKeys
 
-    (extraGen, sec, esis, commitments, parallelProofs) <- timingP "escrow" $ SCRAPE.escrow t participants
+    (extraGen, sec, esis, commitments, parallelProofs) <- timingP "escrow" $ SCRAPE_DDH.escrow t participants
 
-    !validated <- timingP "validating" $ SCRAPE.verifyEncryptedShares extraGen t commitments parallelProofs esis participants
+    !_validated <- timingP "validating" $ SCRAPE_DDH.verifyEncryptedShares extraGen t commitments parallelProofs esis participants
     --putStrLn ("encrypted validated: " ++ show validated)
 
     !decryptedShares <- timingP "decrypting" $ mapM (\(kp,eshare) -> do
-            p <- SCRAPE.shareDecrypt kp eshare
+            p <- SCRAPE_DDH.shareDecrypt kp eshare
             return $! p
         ) (zip keypairParticipants esis)
 
     !v <- timingPureP "verifying-decrypted" $
-        and $ map (SCRAPE.verifyDecryptedShare) $ zip3 esis participantsPublicKeys decryptedShares
+        and $ map (SCRAPE_DDH.verifyDecryptedShare) $ zip3 esis participantsPublicKeys decryptedShares
     putStrLn $ show v
 
-    recovered <- timingPureP "recovering" $ SCRAPE.recover $ zip [1..] $ take (fromIntegral t) $ decryptedShares
+    recovered <- timingPureP "recovering" $ SCRAPE_DDH.recover $ zip [1..] $ take (fromIntegral t) $ decryptedShares
     putStrLn $ "secret   : " ++ show sec
     putStrLn $ "recovered: " ++ show recovered
+
+goScrapeBDS :: Int -> Int -> IO ()
+goScrapeBDS t n = do
+  (dp, parties) <- timingP "setup" $ SCRAPE_BDS.setup n
+
+  (secret, encryptedShares, commitments) <- timingP "distribution" $
+    SCRAPE_BDS.distribution dp parties t
+
+  timingP "verification" $
+    SCRAPE_BDS.verification dp t parties encryptedShares commitments
+
+  recoveredSecret <- timingP "reconstruction" $
+    SCRAPE_BDS.reconstruction dp (V.take t parties)
+                                 (V.take t encryptedShares)
+                                 (V.take t commitments)
+
+  unless (secret == recoveredSecret) $ do
+    fail $ "secret and recoveredSecret do not match: secret = "
+      ++ show secret ++ ", recoveredSecret = " ++ show recoveredSecret
+
+  putStrLn $ "secret: " ++ show recoveredSecret
 
 main :: IO ()
 main = do
     args <- getArgs
     case args of
-        ["scrape", tS, nS] -> goScrape (read tS) (read nS)
+        ["scrape-bds", tS, nS] -> goScrapeBDS (read tS) (read nS)
+        ["scrape-ddh", tS, nS] -> goScrapeDDH (read tS) (read nS)
         [tS, nS]           -> go (read tS) (read nS)
-        _                  -> error "error: pvss [scrape] <threshold> <number>"
+        _                  -> error "error: pvss [scrape-ddh|scrape-bds] <threshold> <number>"

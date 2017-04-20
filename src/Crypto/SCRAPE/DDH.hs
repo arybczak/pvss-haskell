@@ -5,7 +5,7 @@
 {-# LANGUAGE DeriveGeneric              #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
-module Crypto.SCRAPE
+module Crypto.SCRAPE.DDH
     (
     -- * Simple alias
       Threshold
