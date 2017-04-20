@@ -54,7 +54,7 @@ import           GHC.Generics
 import           Data.Binary
 import           Data.Binary.Get        (getWord32le)
 import           Data.Binary.Put        (putWord32le)
-import           Data.List              (foldl')
+import qualified Data.Vector            as V
 
 import qualified Crypto.PVSS.DLEQ       as DLEQ
 import           Crypto.PVSS.ECC
@@ -274,21 +274,22 @@ verifySecret (ExtraGen gen) commitments (Secret secret) proof =
 recover :: [DecryptedShare]
         -> Secret
 recover shares =
-    Secret $ foldl' interpolate pointIdentity (zip shares [0..])
+    Secret $ V.ifoldl' interpolate pointIdentity vshares
   where
+    vshares = V.fromList shares
     t = fromIntegral $ length shares
 
-    interpolate :: Point -> (DecryptedShare, ShareId) -> Point
-    interpolate !result (share, sid) = result .+ (shareDecryptedVal share .* value)
+    interpolate :: Point -> Int -> DecryptedShare -> Point
+    interpolate result sid share = result .+ (shareDecryptedVal share .* value)
       where
         value = calc 0 (keyFromNum 1)
-        calc :: Integer -> Scalar -> Scalar
-        calc !j acc
+        calc :: Int -> Scalar -> Scalar
+        calc j !acc
             | j == t       = acc
             | j == sid     = calc (j+1) acc
             | otherwise    =
-                let sj   = decryptedShareID (shares !! fromIntegral j)
-                    si   = decryptedShareID (shares !! fromIntegral sid)
+                let sj   = decryptedShareID (vshares V.! j)
+                    si   = decryptedShareID (vshares V.! sid)
                     dinv = keyInverse (keyFromNum sj #- keyFromNum si)
                     e    = keyFromNum sj #* dinv
                  in calc (j+1) (acc #* e)

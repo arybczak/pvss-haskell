@@ -45,7 +45,7 @@ import           Control.Monad
 import           GHC.Generics
 
 import           Data.Binary
-import           Data.List              (foldl')
+import qualified Data.Vector            as V
 
 import qualified Crypto.PVSS.DLEQ       as DLEQ
 import           Crypto.PVSS.ECC
@@ -271,21 +271,22 @@ reorderDecryptShares (Participants participants) shares =
 -- preferably from a 'getValidRecoveryShares' call
 recover :: [(ShareId, DecryptedShare)] -- the list of participant decrypted share identified by a public key
         -> Secret
-recover shares = Secret $ foldl' interpolate pointIdentity (zip shares [0..])
+recover shares = Secret $ V.ifoldl' interpolate pointIdentity vshares
   where
+    vshares = V.fromList shares
     t = fromIntegral $ length shares
 
-    interpolate :: Point -> ((Integer, DecryptedShare), ShareId) -> Point
-    interpolate !result (share, sid) = result .+ (shareDecryptedVal (snd share) .* value)
+    interpolate :: Point -> Int -> (Integer, DecryptedShare) -> Point
+    interpolate result sid share = result .+ (shareDecryptedVal (snd share) .* value)
       where
         value = calc 0 (keyFromNum 1)
-        calc :: Integer -> Scalar -> Scalar
-        calc !j acc
+        calc :: Int -> Scalar -> Scalar
+        calc j !acc
             | j == t       = acc
             | j == sid     = calc (j+1) acc
             | otherwise    =
-                let sj   = fst (shares !! fromIntegral j)
-                    si   = fst (shares !! fromIntegral sid)
+                let sj   = fst (vshares V.! j)
+                    si   = fst (vshares V.! sid)
                     dinv = keyInverse (keyFromNum sj #- keyFromNum si)
                     e    = keyFromNum sj #* dinv
                  in calc (j+1) (acc #* e)
