@@ -97,11 +97,12 @@ goScrapeDDH t n = do
             return $! p
         ) (zip keypairParticipants esis)
 
+    let select = take $ fromIntegral t
     !v <- timingPureP "verifying-decrypted" $
-        and $ map (SCRAPE_DDH.verifyDecryptedShare) $ zip3 esis participantsPublicKeys decryptedShares
+        and $ map (SCRAPE_DDH.verifyDecryptedShare) $ select $ zip3 esis participantsPublicKeys decryptedShares
     putStrLn $ show v
 
-    recovered <- timingPureP "recovering" $ SCRAPE_DDH.recover $ zip [1..] $ take (fromIntegral t) $ decryptedShares
+    recovered <- timingPureP "recovering" $ SCRAPE_DDH.recover $ zip [1..] $ select decryptedShares
     putStrLn $ "secret   : " ++ show sec
     putStrLn $ "recovered: " ++ show recovered
 
